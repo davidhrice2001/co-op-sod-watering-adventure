@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Co-Op Sod Watering Adventure</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <canvas id="game"></canvas>
+
+  <!-- HUD -->
+  <div id="hud" class="hidden">
+    <div class="hud-top">
+      <div class="hud-chip" id="hud-round">Round 1</div>
+      <div class="hud-timer" id="hud-timer">60</div>
+      <div class="hud-chip money" id="hud-money">$0</div>
+    </div>
+    <div class="hud-combo" id="hud-combo">
+      <div class="combo-text"><span id="combo-mult">x1.00</span> <span id="combo-count">COMBO</span></div>
+      <div class="combo-bar"><div id="combo-fill"></div></div>
+    </div>
+    <div class="hud-tank">
+      <div class="tank-label">TANK <span id="tank-text">160 / 160 L</span></div>
+      <div class="tank-bar"><div id="tank-fill"></div></div>
+      <div class="tank-status" id="tank-status"></div>
+    </div>
+    <div class="hud-field">
+      <div>Field <b id="field-pct">0%</b></div>
+      <div>This round <b id="round-earned">$0</b></div>
+    </div>
+    <div class="hud-roles">
+      <span class="role driver">Driver: WASD + Space</span>
+      <span class="role sprayer" id="hud-aim-mode">Sprayer: Mouse</span>
+      <span class="role cam" id="hud-cam">C: Camera (chase)</span>
+    </div>
+  </div>
+
+  <button id="mute-btn" class="icon-btn" title="Mute (M)">Sound: On</button>
+
+  <!-- MAIN MENU -->
+  <div id="menu" class="overlay">
+    <div class="panel menu-panel">
+      <div class="title-wrap">
+        <div class="title-small">Co-Op</div>
+        <h1>Sod Watering<br>Adventure</h1>
+        <div class="subtitle">One drives the truck. One works the hose. Every lawn pays.</div>
+      </div>
+      <div class="menu-buttons">
+        <button id="btn-continue" class="btn btn-primary hidden">Continue</button>
+        <button id="btn-new" class="btn btn-primary">New Game</button>
+      </div>
+      <div id="save-info" class="save-info"></div>
+      <div class="menu-buttons online-buttons">
+        <button id="btn-host" class="btn btn-online">Host Online Game</button>
+        <button id="btn-join" class="btn btn-online">Join Online Game</button>
+      </div>
+      <div id="net-unavail" class="save-info"></div>
+      <div class="controls">
+        <div class="ctrl-col driver">
+          <h3>Player 1 &middot; Driver</h3>
+          <div><kbd>W</kbd><kbd>S</kbd> throttle / reverse</div>
+          <div><kbd>A</kbd><kbd>D</kbd> steer</div>
+          <div><kbd>Space</kbd> brake</div>
+          <div class="hint">Gamepad 1: triggers + left stick</div>
+        </div>
+        <div class="ctrl-col sprayer">
+          <h3>Player 2 &middot; Sprayer</h3>
+          <div><b>Mouse</b> aim, hold <b>Left Click</b> spray</div>
+          <div>or <kbd>&larr;</kbd><kbd>&uarr;</kbd><kbd>&rarr;</kbd><kbd>&darr;</kbd> aim, <kbd>R-Ctrl</kbd>/<kbd>Enter</kbd>/<kbd>Num0</kbd> spray</div>
+          <div class="hint">Gamepad 2: left stick + trigger (or pad 1 right stick + RB)</div>
+        </div>
+      </div>
+      <div class="tips">
+        Soak tiles until they turn green to get paid. Chain tiles fast for combos. Gold tiles pay big.
+        Park the trailer in a blue <b>REFILL</b> circle to top up. <kbd>C</kbd> camera &middot; <kbd>Esc</kbd> pause &middot; <kbd>M</kbd> mute
+      </div>
+      <a class="classic-link" href="2d/index.html">Classic 2D version</a>
+    </div>
+  </div>
+
+  <!-- ROUND END -->
+  <div id="roundEnd" class="overlay hidden">
+    <div class="panel end-panel">
+      <h2 id="end-title">Round Complete!</h2>
+      <div class="end-total" id="end-total">$0</div>
+      <div class="end-stats" id="end-stats"></div>
+      <button id="btn-to-shop" class="btn btn-primary">To the Shop</button>
+    </div>
+  </div>
+
+  <!-- SHOP -->
+  <div id="shop" class="overlay hidden">
+    <div class="panel shop-panel">
+      <div class="shop-head">
+        <div>
+          <h2>Equipment Shop</h2>
+          <div class="shop-sub" id="shop-sub">Next up: Round 2</div>
+        </div>
+        <div class="shop-money" id="shop-money">$0</div>
+      </div>
+      <div class="shop-grid" id="shop-grid"></div>
+      <div class="shop-foot">
+        <button id="btn-menu-from-shop" class="btn btn-ghost">Save &amp; Quit</button>
+        <button id="btn-swap-roles" class="btn btn-ghost net-only">Swap Roles</button>
+        <button id="btn-start" class="btn btn-primary">Start Round 2</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- PAUSE -->
+  <div id="pause" class="overlay hidden">
+    <div class="panel pause-panel">
+      <h2>Paused</h2>
+      <button id="btn-resume" class="btn btn-primary">Resume</button>
+      <button id="btn-pause-mute" class="btn btn-ghost">Toggle Sound</button>
+      <button id="btn-quit" class="btn btn-ghost">Quit to Menu</button>
+      <div class="hint">Quitting mid-round forfeits this round's progress (your last shop save is kept).</div>
+    </div>
+  </div>
+
+  <!-- ONLINE LOBBY -->
+  <div id="netlobby" class="overlay net-overlay hidden">
+    <div class="panel net-panel">
+      <h2 id="net-title">Host Online Game</h2>
+      <div id="net-host-box">
+        <div class="net-label">Room code &mdash; send it to your partner</div>
+        <div class="net-code-row">
+          <div id="net-code" class="net-code">-----</div>
+          <button id="net-copy" class="btn btn-ghost btn-sm">Copy</button>
+        </div>
+      </div>
+      <div id="net-join-box">
+        <div class="net-label">Enter your partner's room code</div>
+        <div class="net-code-row">
+          <input id="net-code-input" class="net-input" maxlength="5" autocomplete="off" spellcheck="false" placeholder="ABCDE">
+          <button id="net-connect" class="btn btn-primary btn-sm">Connect</button>
+        </div>
+      </div>
+      <div id="net-status-text" class="net-status-text"></div>
+      <div id="net-role-box" class="net-role-box hidden">
+        <div class="net-roles">
+          <div id="net-role-me" class="net-role-card driver">You: Driver</div>
+          <div id="net-role-them" class="net-role-card sprayer">Partner: Sprayer</div>
+        </div>
+        <button id="net-swap" class="btn btn-ghost btn-sm">Swap Roles</button>
+      </div>
+      <div id="net-start-box" class="menu-buttons hidden">
+        <button id="net-continue" class="btn btn-primary hidden">Continue Saved Game</button>
+        <button id="net-new" class="btn btn-primary">Start New Game</button>
+      </div>
+      <button id="net-cancel" class="btn btn-ghost btn-sm">Back to Menu</button>
+      <div class="hint">Both players need this game open in a browser. The host's computer runs the game and keeps the save.</div>
+    </div>
+  </div>
+
+  <!-- ONLINE DISCONNECT -->
+  <div id="netdrop" class="overlay net-overlay hidden">
+    <div class="panel end-panel net-panel">
+      <h2 id="drop-title">Partner disconnected</h2>
+      <p id="drop-msg" class="net-status-text"></p>
+      <div id="drop-code" class="net-code"></div>
+      <div class="net-drop-buttons">
+        <button id="drop-retry" class="btn btn-primary">Reconnect</button>
+        <button id="drop-solo" class="btn btn-primary">Continue Solo (Local)</button>
+        <button id="drop-quit" class="btn btn-ghost">Quit to Menu</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="net-status" class="net-chip hidden"></div>
+
+  <!-- 3D fallback -->
+  <div id="no3d" class="overlay hidden">
+    <div class="panel end-panel">
+      <h2>Needs internet to load three.js</h2>
+      <p>The 3D version loads the three.js library from unpkg.com, and it could not be loaded.
+        Check your connection and reload, or play the <a href="2d/index.html">Classic 2D version</a> (works offline).</p>
+    </div>
+  </div>
+
+  <script src="https://unpkg.com/three@0.160.0/build/three.min.js"></script>
+  <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+  <script src="js/sim.js"></script>
+  <script src="js/net.js"></script>
+  <script src="js/input.js"></script>
+  <script src="js/audio.js"></script>
+  <script src="js/render.js"></script>
+  <script src="js/ui.js"></script>
+  <script src="js/main.js"></script>
+</body>
+</html>
