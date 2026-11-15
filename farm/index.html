@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sod Farm - Home Base</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <div id="stage">
+    <canvas id="game"></canvas>
+  </div>
+
+  <!-- HUD -->
+  <div id="hud" class="hidden">
+    <div class="topbar">
+      <div class="chip money" id="hud-money">$0</div>
+      <div class="chip" id="hud-clock">Day 1 &middot; 7:12</div>
+      <div class="chip inv">
+        <span id="hud-inv">Sod 0 / 12</span>
+        <button class="mini-btn interactive" id="btn-sell1" title="Sell one roll">Sell 1</button>
+        <button class="mini-btn interactive" id="btn-sellall" title="Sell all rolls">Sell all</button>
+      </div>
+      <div class="chip tank">
+        <span class="tank-lbl">Trailer</span>
+        <div class="gauge"><div id="hud-tank-fill"></div></div>
+        <span id="hud-tank-text">200 L</span>
+      </div>
+    </div>
+
+    <div class="corner-btns interactive">
+      <button class="icon-btn" id="btn-equip" title="Equipment (U)">Equipment <kbd>U</kbd></button>
+      <button class="icon-btn" id="btn-mute" title="Mute (M)">Sound: On</button>
+      <button class="icon-btn" id="btn-pause" title="Pause (Esc)">Pause</button>
+    </div>
+
+    <div class="side left">
+      <div class="card-hud" id="farm-panel">
+        <div class="card-title">Farm</div>
+        <div id="farm-body"></div>
+      </div>
+      <div class="roles">
+        <span class="role driver">P1 Driver: WASD + Space</span>
+        <span class="role sprayer">P2 Mouse: tools &amp; hose</span>
+        <span class="role cam" id="hud-cam">C: Camera (overview)</span>
+      </div>
+    </div>
+
+    <div class="side right">
+      <div class="card-hud" id="water-panel">
+        <div class="card-title">Water</div>
+        <div id="water-body"></div>
+      </div>
+    </div>
+
+    <div class="hotbar-wrap">
+      <div id="seed-pick" class="seed-pick interactive hidden"></div>
+      <div id="hotbar" class="hotbar interactive"></div>
+      <div id="tool-info" class="tool-info"></div>
+    </div>
+
+    <div id="tip" class="cursor-tip hidden"></div>
+    <div id="toasts" class="toasts"></div>
+
+    <div id="hint" class="hint-card interactive hidden">
+      <div class="hint-step" id="hint-step">Tip 1 / 5</div>
+      <div class="hint-text" id="hint-text"></div>
+      <div class="hint-btns">
+        <button class="mini-btn" id="hint-skip">Skip tips</button>
+        <button class="mini-btn go" id="hint-next">Next</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- EQUIPMENT -->
+  <div id="equip" class="drawer interactive hidden">
+    <div class="drawer-head">
+      <h3>Equipment</h3>
+      <div class="shop-money" id="equip-money">$0</div>
+      <button class="mini-btn" id="equip-close">Close <kbd>U</kbd></button>
+    </div>
+    <div id="equip-list"></div>
+  </div>
+
+  <!-- MAIN MENU -->
+  <div id="menu" class="overlay">
+    <div class="panel menu-panel">
+      <div class="title-small">Sod Watering Adventure</div>
+      <h1>Sod Farm</h1>
+      <div class="subtitle">Grow sod, lay pipe, keep it wet. Two players, one keyboard and mouse.</div>
+      <div class="menu-buttons">
+        <button id="btn-continue" class="btn btn-primary hidden">Continue</button>
+        <button id="btn-new" class="btn btn-primary">New Game</button>
+      </div>
+      <div id="save-info" class="save-info"></div>
+      <div class="controls">
+        <div class="ctrl-col driver">
+          <h3>Player 1 &middot; Driver</h3>
+          <div><kbd>W</kbd><kbd>S</kbd> throttle / reverse</div>
+          <div><kbd>A</kbd><kbd>D</kbd> steer &nbsp; <kbd>Space</kbd> brake</div>
+          <div class="hint">Park the trailer at the Fill Station to refill. Gamepad 1 works too.</div>
+        </div>
+        <div class="ctrl-col sprayer">
+          <h3>Player 2 &middot; Mouse</h3>
+          <div><b>Hose</b>: aim with mouse, hold <b>Left Click</b> to spray</div>
+          <div>Tools: <kbd>1</kbd>&ndash;<kbd>0</kbd> <kbd>-</kbd> <kbd>=</kbd> or click the hotbar; click / drag to apply</div>
+          <div><b>Right Click</b> or <kbd>Esc</kbd> back to hose</div>
+          <div class="hint">Keyboard hose: <kbd>&larr;</kbd><kbd>&uarr;</kbd><kbd>&rarr;</kbd><kbd>&darr;</kbd> aim, <kbd>Enter</kbd> spray</div>
+        </div>
+      </div>
+      <div class="tips">
+        <kbd>C</kbd> camera &middot; wheel zoom &middot; middle-drag or <kbd>Shift</kbd>+screen edge pan &middot; <kbd>Home</kbd> recentre &middot;
+        <kbd>X</kbd> show pipes &middot; <kbd>U</kbd> equipment &middot; <kbd>Esc</kbd> pause &middot; <kbd>M</kbd> mute
+      </div>
+      <a class="classic-link" href="../index.html">Back to the original Sod Watering Adventure</a>
+    </div>
+  </div>
+
+  <!-- PAUSE -->
+  <div id="pause" class="overlay hidden">
+    <div class="panel pause-panel">
+      <h2>Paused</h2>
+      <button id="btn-resume" class="btn btn-primary">Resume</button>
+      <button id="btn-pause-mute" class="btn btn-ghost">Toggle Sound</button>
+      <button id="btn-quit" class="btn btn-ghost">Save &amp; Quit</button>
+    </div>
+  </div>
+
+  <script src="https://unpkg.com/three@0.160.0/build/three.min.js"></script>
+  <script src="js/base-sim.js"></script>
+  <script src="js/base-input.js"></script>
+  <script src="js/audio.js"></script>
+  <script src="js/base-render.js"></script>
+  <script src="js/base-ui.js"></script>
+  <script src="js/main.js"></script>
+</body>
+</html>

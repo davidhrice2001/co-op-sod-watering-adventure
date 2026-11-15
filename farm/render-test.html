@@ -1,0 +1,69 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Base render test</title>
+<style>html,body{margin:0;height:100%;background:#000;overflow:hidden}#wrap{position:relative;width:100%;height:100%}canvas{display:block;width:100%;height:100%}
+#hud{position:absolute;left:8px;top:8px;color:#fff;font:13px monospace;background:rgba(0,0,0,.5);padding:4px 8px;z-index:9}</style>
+</head><body><div id="wrap"><canvas id="c"></canvas><div id="hud"></div></div>
+<script src="https://unpkg.com/three@0.160.0/build/three.min.js"></script>
+<script src="js/base-sim.js"></script>
+<script src="js/base-render.js"></script>
+<script>
+(function () {
+  var S = SOD.BaseSim, R = SOD.BaseRender, canvas = document.getElementById('c');
+  if (!R.init(canvas)) { document.getElementById('hud').textContent = 'init failed'; return; }
+  function fit() { R.resize(canvas.clientWidth, canvas.clientHeight); }
+  window.addEventListener('resize', fit); fit();
+  var st = S.newGame(7), I = function (c, r) { return r * st.cols + c; };
+  st.money = 100000;
+  S.buyLand(st, 4 * 7 + 5);                     // extra parcel east
+  S.build(st, 'pipe', 17, 13); S.build(st, 'pipe', 17, 14);
+  S.build(st, 'sprinkler', 17, 15);
+  [[16, 14], [18, 14], [16, 15], [18, 15], [16, 16], [17, 16], [18, 16]].forEach(function (p) { S.till(st, p[0], p[1]); S.seed(st, p[0], p[1], p[0] === 18 ? 1 : 0); });
+  S.build(st, 'rack', 19, 12); S.build(st, 'rack', 12, 19);
+  S.build(st, 'pump', 20, 19); S.build(st, 'pipe', 21, 19); S.build(st, 'pipe', 22, 19); S.build(st, 'pipe', 22, 18); S.build(st, 'tank', 23, 18); S.build(st, 'pipe', 23, 19);
+  S.build(st, 'sprinkler', 14, 18);              // unconnected -> warning + dry sputter
+  for (var r = 14; r <= 18; r++) for (var c = 12; c <= 15; c++) {
+    if (c === 14 && r === 18) continue;
+    S.till(st, c, r); if (r < 18 || c !== 15) S.seed(st, c, r, (c + r) % 2);
+    var i = I(c, r);
+    if (st.ground[i] === 2) { st.growth[i] = ((c - 12) * 5 + (r - 14)) / 19; st.moist[i] = (r - 14) / 4; st.health[i] = c === 12 ? 0.3 : 1; }
+  }
+  st.growth[I(13, 16)] = 1; st.growth[I(15, 15)] = 1; st.moist[I(15, 15)] = 0.8;
+  st.growth[I(16, 16)] = 0.6; st.moist[I(16, 16)] = 0.1;
+  st.inv[0] = 14; st.inv[1] = 6;
+  S.sellSod(st, 2);
+
+  var phases = [
+    { name: 'overview', cameraMode: 'overview', showPipes: false, tool: 'hose', hover: null },
+    { name: 'build: sprinkler ok', cameraMode: 'overview', showPipes: true, tool: 'sprinkler', hover: { c: 19, r: 16, kind: 'sprinkler', ok: true, w: 1, h: 1 } },
+    { name: 'build: tank blocked', cameraMode: 'overview', showPipes: true, tool: 'tank', hover: { c: 13, r: 15, kind: 'tank', ok: false, w: 1, h: 1 } },
+    { name: 'land tool', cameraMode: 'overview', showPipes: false, tool: 'land', hover: { c: 20, r: 12, kind: 'land', ok: true, w: 4, h: 4 } },
+    { name: 'chase', cameraMode: 'chase', showPipes: false, tool: 'hose', hover: null }
+  ];
+  window.TEST = { phase: 0, auto: true, state: function () { return st; } };
+  var last = performance.now(), acc = 0, tPhase = 0, ang = 0;
+  TEST.advance = function (sec) { for (var k = 0; k < sec * 30; k++) tick(1 / 30); return st.clock.t; };
+  function frame(now) {
+    var dt = Math.min(0.1, (now - last) / 1000); last = now;
+    tick(dt);
+    requestAnimationFrame(frame);
+  }
+  function tick(dt) {
+    tPhase += dt;
+    if (TEST.auto && tPhase > 5) { tPhase = 0; TEST.phase = (TEST.phase + 1) % phases.length; }
+    var ph = phases[TEST.phase];
+    acc += dt; ang += dt * 0.8;
+    var nz = S.getNozzle(st);
+    var inputs = { driver: { throttle: 0.35, steer: 0.55, brake: false },
+      sprayer: { aimX: nz.x + Math.cos(ang) * 150, aimY: nz.y + Math.sin(ang) * 150, spraying: true } };
+    while (acc >= S.C.DT) { acc -= S.C.DT; S.step(st, inputs); }
+    R.onEvents(S.takeEvents(st));
+    var view = { dt: dt, cameraMode: ph.cameraMode, hover: ph.hover, showPipes: ph.showPipes, tool: ph.tool, localAim: { x: inputs.sprayer.aimX, y: inputs.sprayer.aimY } };
+    // brand-new state object every frame, like the real glue may do
+    var copy = JSON.parse(JSON.stringify(st));
+    R.draw(copy, view);
+    document.getElementById('hud').textContent = TEST.phase + ': ' + ph.name + '  t=' + st.clock.t.toFixed(2) + '  $' + st.money;
+  }
+  requestAnimationFrame(frame);
+})();
+</script>
+</body></html>
