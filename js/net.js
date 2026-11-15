@@ -19,7 +19,9 @@
   var PREFIX = 'sodwater3d-v1-';
   var CODE_CHARS = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'; // no I, L, O, 0, 1
   var CODE_LEN = 5;
-  var SNAP_MS = 50, INPUT_MS = 33, PING_MS = 1000, TIMEOUT_MS = 6000, JOIN_TIMEOUT_MS = 15000;
+  var SNAP_MS = 50, INPUT_MS = 33, PING_MS = 1000, TIMEOUT_MS = 10000, JOIN_TIMEOUT_MS = 15000;
+  // guest auto-reconnect after a mid-game drop: wait AUTO_DELAYS[n-1] before attempt n; each attempt gets AUTO_JOIN_MS
+  var AUTO_DELAYS = [1000, 2000, 4000, 6000], AUTO_JOIN_MS = 8000;
   var FULL_EVERY = 200, INTERP_MS = 100, TELEPORT = 150;
 
   // ---------------------------------------------------------------- codec helpers
@@ -208,6 +210,7 @@
   var cb = {};
   var S = null;           // current session
   var SER = 'raw';
+  var retryTimer = null;  // pending guest auto-reconnect attempt
   var $ = function (id) { return document.getElementById(id); };
   function nowMs() { return performance.now(); }
   function available() { return typeof window.Peer === 'function'; }
@@ -217,7 +220,7 @@
   function newSession(kind) {
     return { kind: kind, peer: null, conn: null, code: '', hostRole: 'driver', inGame: false, connected: false,
       remoteIn: null, lastRecv: 0, lastSnap: 0, lastInput: 0, lastPing: 0, rtt: null, enc: new Encoder(),
-      dec: new Decoder(), pendingEv: [], lastResync: 0, joinTimer: null, tries: 0, rejoin: false, dropped: false };
+      dec: new Decoder(), pendingEv: [], lastResync: 0, joinTimer: null, tries: 0, rejoin: false, dropped: false, auto: 0, lost: '' };
   }
   function myRole() { return !S ? null : S.kind === 'host' ? S.hostRole : other(S.hostRole); }
   function genCode() {
@@ -336,7 +339,7 @@
     conn.on('open', function () { if (S === sess && sess.conn === conn) onOpen(sess); });
     conn.on('data', function (d) { if (S === sess && sess.conn === conn) onData(sess, dec(d)); });
     conn.on('close', function () { if (S === sess && sess.conn === conn) onLost(sess, 'close'); });
-    conn.on('error', function () { if (S === sess && sess.conn === conn) onLost(sess, 'error'); });
+    conn.on('error', function (err) { if (S === sess && sess.conn === conn) onLost(sess, 'error', err && err.type); });
   }
 
   // ---------------------------------------------------------------- host
@@ -408,38 +411,79 @@
   }
 
   // ---------------------------------------------------------------- guest
-  function startJoin(code, rejoin) {
+  // auto: 0 for a manual join/rejoin, n for the n-th automatic reconnect attempt (lost: why the link dropped)
+  function startJoin(code, rejoin, auto, lost) {
     if (!available()) return;
+    if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
     code = cleanCode(code);
     var say = rejoin ? dropMsg : function (t, e) { lobbyStatus(t, e); };
     if (!validCode(code)) { say('Room codes are ' + CODE_LEN + ' letters/numbers, like K7QXM.', true); return; }
-    var keepMode = rejoin && S && S.inGame;
+    var keepMode = rejoin && S && (S.inGame || S.dropped);
     leave(true);
     var sess = S = newSession('guest');
     sess.code = code; sess.rejoin = !!rejoin; sess.inGame = false;
     sess.dropped = !!keepMode;
-    say('Connecting to room ' + code + '\u2026');
+    sess.auto = auto || 0; sess.lost = lost || '';
+    if (sess.auto) showDrop('guest', 'Connection lost', reconnectingText(sess.auto, sess.lost));
+    else say('Connecting to room ' + code + '…');
     var fail = function (text) {
       if (S !== sess) return;
       destroyPeer(sess);
       sess.connected = false;
+      if (sess.auto) { autoRetry(sess, text); return; }
       if (sess.rejoin) say(text); else { say(text, true); show('net-connect', true); }
     };
-    sess.joinTimer = setTimeout(function () { fail('Timed out connecting to room ' + code + '. Check the code, and that the host is still in the lobby.'); }, JOIN_TIMEOUT_MS);
+    sess.joinTimer = setTimeout(function () { fail('Timed out connecting to room ' + code + '. Check the code, and that the host is still in the lobby.'); }, sess.auto ? AUTO_JOIN_MS : JOIN_TIMEOUT_MS);
     var peer;
     try { peer = new window.Peer({ debug: 0 }); } catch (e) { fail('Online play unavailable: ' + e.message); return; }
     sess.peer = peer;
+    var brokerTries = 0;
     peer.on('open', function () {
-      if (S !== sess) return;
+      if (S !== sess || sess.peer !== peer) return;
+      brokerTries = 0;
+      if (sess.conn) return; // broker came back while already linked to the host
       var conn = peer.connect(PREFIX + code, { reliable: true, serialization: SER });
       sess.conn = conn;
       attachConn(sess, conn);
     });
+    peer.on('disconnected', function () {
+      // lost the matchmaking server, not the host: the data channel keeps working, so quietly reconnect
+      if (S !== sess || sess.peer !== peer || peer.destroyed || !sess.connected) return;
+      var wait = Math.min(1500 * Math.pow(2, brokerTries++), 30000);
+      setTimeout(function () { try { if (S === sess && sess.peer === peer && !peer.destroyed && peer.disconnected) peer.reconnect(); } catch (e) { /* ignore */ } }, wait);
+    });
     peer.on('error', function (err) {
-      if (S !== sess) return;
-      if (sess.connected) { if (err && err.type !== 'peer-unavailable') onLost(sess, 'error'); return; }
+      if (S !== sess || sess.peer !== peer) return;
+      // once linked, broker/signalling errors don't affect the data channel; its own close/error/timeout decide
+      if (sess.connected) return;
       fail(peerErrorText(err));
     });
+  }
+  function reconnectingText(n, lost) {
+    return 'Reconnecting to host… (attempt ' + n + ' of ' + AUTO_DELAYS.length + ')' + (lost ? ' ' + lost : '');
+  }
+  // Schedule the next automatic reconnect attempt, or give up and show the manual Reconnect screen.
+  function autoRetry(sess, failText) {
+    var n = (sess.auto || 0) + 1;
+    sess.dropped = true; sess.inGame = false;
+    if (n > AUTO_DELAYS.length) {
+      sess.auto = 0;
+      showDrop('guest', 'Host disconnected', (sess.lost || 'Lost the connection to the host.') +
+        ' Reconnecting automatically failed after ' + AUTO_DELAYS.length + ' tries' +
+        (failText ? ' (last try: ' + failText.replace(/\.$/, '') + ')' : '') +
+        '. You can try to reconnect to room ' + sess.code + '.');
+      return;
+    }
+    showDrop('guest', 'Connection lost', reconnectingText(n, sess.lost));
+    if (retryTimer) clearTimeout(retryTimer);
+    retryTimer = setTimeout(function () { retryTimer = null; if (S === sess) startJoin(sess.code, true, n, sess.lost); }, AUTO_DELAYS[n - 1]);
+  }
+  function lostText(why, type) {
+    if (why === 'bye') return 'The host ended the session.';
+    if (why === 'timeout') return 'The host stopped responding (nothing received for ' + Math.round(TIMEOUT_MS / 1000) + ' s).';
+    if (why === 'close') return 'The connection to the host closed.';
+    if (why === 'error') return 'A network error broke the connection' + (type ? ' (' + type + ')' : '') + '.';
+    return 'Lost the connection to the host.';
   }
 
   // ---------------------------------------------------------------- shared connection events
@@ -498,7 +542,7 @@
     } else if (m.t === 'field' || m.t === 'snap') {
       sess.dec.receive(m, now);
       if (m.t === 'snap' && sess.dec.ready && !sess.inGame) {
-        sess.inGame = true; sess.dropped = false;
+        sess.inGame = true; sess.dropped = false; sess.auto = 0;
         closeLobby(); hideDrop();
         if (cb.enterGuest) cb.enterGuest();
         applyClasses();
@@ -506,12 +550,20 @@
     } else if (m.t === 'full') {
       var text = 'That room already has two players.';
       destroyPeer(sess); sess.connected = false;
-      if (sess.rejoin) dropMsg(text); else lobbyStatus(text, true);
+      if (sess.auto) autoRetry(sess, text); // the host may not have noticed the old link dropping yet
+      else if (sess.rejoin) dropMsg(text); else lobbyStatus(text, true);
     }
   }
 
-  function onLost(sess, why) {
-    if (!sess.connected && why !== 'bye') { /* already handled */ }
+  function onLost(sess, why, type) {
+    var now = nowMs(), wasLinked = sess.connected;
+    if (wasLinked || why === 'bye') {
+      try {
+        console.warn('[SOD.Net] ' + sess.kind + ' lost the link: ' + why + (type ? ' (' + type + ')' : '') +
+          '; last message ' + Math.round(now - sess.lastRecv) + ' ms ago; last ping sent ' + Math.round(now - sess.lastPing) +
+          ' ms ago; rtt ' + (sess.rtt === null ? 'n/a' : Math.round(sess.rtt) + ' ms'));
+      } catch (e) { /* ignore */ }
+    }
     var c = sess.conn;
     sess.conn = null;
     sess.connected = false;
@@ -522,13 +574,17 @@
         if (cb.hostAction) cb.hostAction('autopause');
         showDrop('host', 'Partner disconnected', 'The game is paused. Your partner can rejoin with the same room code, or you can keep playing on this computer.');
       } else {
-        lobbyStatus('Your partner left. Waiting for a partner to join\u2026');
+        lobbyStatus('Your partner left. Waiting for a partner to join…');
         show('net-start-box', false);
       }
     } else {
       destroyPeer(sess);
-      var msg = why === 'bye' ? 'The host ended the session.' : 'Lost the connection to the host.';
-      if (sess.inGame || sess.rejoin) {
+      var msg = lostText(why, type);
+      if (why !== 'bye' && (sess.inGame || sess.auto || (sess.rejoin && wasLinked))) {
+        // dropped mid-game without the host ending it: rejoin the same room automatically
+        if (wasLinked) { sess.lost = msg; sess.auto = 0; }
+        autoRetry(sess, wasLinked ? '' : msg);
+      } else if (sess.inGame || sess.rejoin) {
         sess.dropped = true;
         sess.inGame = false;
         showDrop('guest', 'Host disconnected', msg + ' You can try to reconnect to room ' + sess.code + '.');
@@ -579,6 +635,7 @@
 
   // End the session. quiet: don't touch the lobby overlay (used when restarting a session).
   function leave(quiet) {
+    if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
     var sess = S;
     S = null;
     if (sess) {
